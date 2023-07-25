@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Each Message contains the name of the user who sent it, the time it was sent, and the payload (contents of the message).
 ///
 /// Derives Serialize and Deserialize for easy transmission.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     from: String,
     time: String,
