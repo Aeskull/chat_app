@@ -16,7 +16,6 @@ use tui::{
     Frame, Terminal,
 };
 use tui_textarea::{Input, Key, TextArea};
-use std::io::Write;
 
 /// ### Terminal update loop.
 ///
@@ -49,7 +48,6 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     });
 
     let mut text_input = TextArea::default();
-    let mut edit = false;
     text_input.set_block(
         Block::default()
             .borders(Borders::ALL)
@@ -70,26 +68,15 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     loop {
         terminal.draw(|f| draw_ui(f, &mut text_input, &mut text_messages))?;
 
-        if edit {
-            if let Ok(Event::Key(k)) = event::read() {
-                if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
-                    text_input.input(to_input(k));
-                } else if k.code == KeyCode::Esc {
-                    edit = false;
-                }
-            }
-        } else {
-            if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
-                match code {
-                    KeyCode::Char('e') => edit = true,
-                    KeyCode::Char('q') => break,
-                    KeyCode::Enter => {
-                        let s = text_input.lines().join("\n");
-                        stx.send(s).await?;
-                        while text_input.delete_char() {}
-                    }
-                    _ => {}
-                }
+        if let Ok(Event::Key(k)) = event::read() {
+            if k.kind == KeyEventKind::Press && k.code == KeyCode::Enter && !k.modifiers.contains(KeyModifiers::SHIFT) {
+                let s = text_input.lines().join("\n");
+                stx.send(s).await?;
+                while text_input.delete_char() {}
+            } else if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
+                text_input.input(to_input(k));
+            } else if k.code == KeyCode::Esc {
+                break;
             }
         }
 
