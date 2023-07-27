@@ -1,55 +1,106 @@
 use crate::{message::Message, prelude::*};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex, OnceLock},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, Clear},
 };
 use tokio::sync::mpsc::channel;
 use tui::{
-    backend::CrosstermBackend,
+    backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Widget},
-    Terminal,
+    style::{Color, Style},
+    widgets::{Block, BorderType, Borders},
+    Frame, Terminal,
 };
-
-// static INBOX: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
+use tui_textarea::{Input, Key, TextArea};
+use std::io::Write;
 
 /// ### Terminal update loop.
 ///
 /// Both the `sender_loop` and `reciever_loop` start from here.
 ///
 /// Two sets of senders and recievers are made. One Sender is set to the `reciever_loop`, and one Reciever is passed to the `sender_loop`
-pub async fn terminal_loop() -> Result<()> {
+pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
+    enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).unwrap();
 
-    let (stx, srx) = channel::<Message>(100);
+    let (stx, srx) = channel::<String>(100);
     let (rtx, mut rrx) = channel::<Message>(100);
+    let (sstx, ssrx) = channel::<String>(100);
+    let rip = ip.clone();
 
     tokio::spawn(async {
-        if let Err(e) = crate::sender::sender_loop(srx).await {
+        if let Err(e) = crate::sender::sender_loop(srx, user, ip, sstx).await {
             println!("ERROR: {e}");
             return;
         }
     });
     tokio::spawn(async {
-        if let Err(e) = crate::reciever::reciever_loop(rtx).await {
+        if let Err(e) = crate::reciever::reciever_loop(rtx, rip, ssrx).await {
             println!("ERROR: {e}");
             return;
         }
     });
 
-    terminal.draw(|f| {
-        let size = f.size();
-        let block = Block::default().title("Block").borders(Borders::ALL);
-        f.render_widget(block, size);
-    })?;
+    let mut text_input = TextArea::default();
+    let mut edit = false;
+    text_input.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Input"),
+    );
+
+    let mut text_messages = TextArea::default();
+    text_messages.set_block(
+        Block::default()
+            .title("Messages")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::White))
+            .border_type(BorderType::Rounded),
+    );
+    text_messages.set_cursor_style(Style::default().fg(Color::Black));
+
+    loop {
+        terminal.draw(|f| draw_ui(f, &mut text_input, &mut text_messages))?;
+
+        if edit {
+            if let Ok(Event::Key(k)) = event::read() {
+                if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
+                    text_input.input(to_input(k));
+                } else if k.code == KeyCode::Esc {
+                    edit = false;
+                }
+            }
+        } else {
+            if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
+                match code {
+                    KeyCode::Char('e') => edit = true,
+                    KeyCode::Char('q') => break,
+                    KeyCode::Enter => {
+                        let s = text_input.lines().join("\n");
+                        stx.send(s).await?;
+                        while text_input.delete_char() {}
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        tokio::select! {
+            Some(m) = rrx.recv() => {
+                text_messages.insert_str(format!("{m}"));
+                text_messages.insert_newline();
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
+        }
+    }
 
     execute!(
         terminal.backend_mut(),
@@ -57,22 +108,64 @@ pub async fn terminal_loop() -> Result<()> {
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;
+    disable_raw_mode()?;
 
     Ok(())
 }
 
+fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &mut TextArea, msg: &mut TextArea) {
+    let msg_widget = msg.widget();
+    let widget = ta.widget();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)].as_ref())
+        .split(f.size());
+
+    f.render_widget(msg_widget, chunks[0]);
+    f.render_widget(widget, chunks[1]);
+}
+
+fn to_input(key: KeyEvent) -> Input {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let key = match key.code {
+        KeyCode::Char(c) => Key::Char(c),
+        KeyCode::Backspace => Key::Backspace,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::Up => Key::Up,
+        KeyCode::Down => Key::Down,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::Delete => Key::Delete,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::Esc => Key::Esc,
+        KeyCode::F(x) => Key::F(x),
+        _ => Key::Null,
+    };
+    Input { key, ctrl, alt }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use crate::message::Message;
-    use crossterm::event::{KeyEvent, KeyEventKind};
-    use crossterm::style;
+    use crate::terminal::to_input;
+    use crossterm::event::{KeyCode, KeyEventKind, EnableMouseCapture, self, Event, KeyEvent, DisableMouseCapture};
+    use crossterm::execute;
+    use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen, disable_raw_mode, LeaveAlternateScreen};
     use tokio::sync::mpsc::channel;
     use tokio::{
         spawn,
         sync::mpsc::{Receiver, Sender},
     };
+    use tui::Terminal;
+    use tui::backend::CrosstermBackend;
+    use tui::widgets::{Block, Borders};
+    use tui_textarea::TextArea;
 
     /// Test of just figuring out how mpsc channels work.
     #[tokio::test]
@@ -91,10 +184,10 @@ mod tests {
         let (stx, srx) = channel::<Message>(100);
         let (rtx, mut rrx) = channel::<Message>(100);
 
-        let h1 = spawn(async move {
+        spawn(async move {
             sender_test(srx).await;
         });
-        let h2 = spawn(async move {
+        spawn(async move {
             reciever_test(rtx).await;
         });
 
@@ -106,130 +199,132 @@ mod tests {
 
     #[test]
     fn tui_input_test() {
-        use crossterm::{
-            event::{
-                self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode,
-                KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-                PushKeyboardEnhancementFlags,
-            },
-            execute,
-            terminal::{
-                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-            },
-        };
-        use std::{error::Error, io};
-        use tui::{
-            backend::{Backend, CrosstermBackend},
-            layout::{Constraint, Direction, Layout},
-            style::{Color, Modifier, Style},
-            text::{Span, Spans, Text},
-            widgets::{Block, Borders, List, ListItem, Paragraph},
-            Frame, Terminal,
-        };
-        use unicode_width::UnicodeWidthStr;
-
-        fn ui<B: Backend>(f: &mut Frame<B>, im: &mut InputMode, s: &str) {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(2)
-                .constraints(
-                    [
-                        Constraint::Length(1),
-                        Constraint::Length(3),
-                        Constraint::Min(1),
-                    ]
-                    .as_ref(),
-                )
-                .split(f.size());
-
-            let (msg, style) = match im {
-                InputMode::Normal => (
-                    vec![
-                        Span::raw("Press "),
-                        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(" to exit, "),
-                        Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(" to start editing."),
-                    ],
-                    Style::default().add_modifier(Modifier::RAPID_BLINK),
-                ),
-                InputMode::Editing => (
-                    vec![
-                        Span::raw("Press "),
-                        Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(" to stop editing, "),
-                        Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                        Span::raw(" to record the message"),
-                    ],
-                    Style::default(),
-                ),
-            };
-
-            let mut text = Text::from(Spans::from(msg));
-            text.patch_style(style);
-            let help_message = Paragraph::new(text);
-            f.render_widget(help_message, chunks[0]);
-
-            let input = Paragraph::new(s.as_ref())
-                .style(match im {
-                    InputMode::Normal => Style::default(),
-                    InputMode::Editing => Style::default().fg(Color::Yellow),
-                })
-                .block(Block::default().borders(Borders::ALL).title("Input"));
-            f.render_widget(input, chunks[1]);
-            match im {
-                InputMode::Normal => {}
-                InputMode::Editing => {
-                    f.set_cursor(chunks[1].x + s.width() as u16 + 1, chunks[1].y + 1);
-                }
-            }
-        }
-
         enable_raw_mode().unwrap();
-        let mut stdout = io::stdout();
+        let mut stdout = std::io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
 
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        #[derive(Eq, PartialEq)]
-        enum InputMode {
-            Normal,
-            Editing,
-        }
-        let mut im = InputMode::Normal;
-        let mut s = String::new();
-
+        let mut ta = TextArea::default();
+        ta.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Input")
+                .border_type(tui::widgets::BorderType::Rounded),
+        );
+        let mut msg = TextArea::default();
+        msg.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Messages")
+                .border_type(tui::widgets::BorderType::Rounded),
+        );
+        let mut edit = false;
         loop {
-            terminal.draw(|f| ui(f, &mut im, &s)).unwrap();
-            if event::poll(Duration::from_millis(100)).unwrap() {
-                if let Event::Key(KeyEvent { code, kind, .. }) = event::read().unwrap() {
-                    if kind == KeyEventKind::Press {
-                        match im {
-                            InputMode::Normal => match code {
-                                KeyCode::Char('e') => {
-                                    im = InputMode::Editing;
-                                }
-                                KeyCode::Char('q') => {
-                                    break;
-                                }
-                                _ => {}
-                            },
-                            InputMode::Editing => match code {
-                                KeyCode::Enter => {}
-                                KeyCode::Char(c) => {
-                                    s.push(c);
-                                }
-                                KeyCode::Backspace => {
-                                    s.pop();
-                                }
-                                KeyCode::Esc => {
-                                    im = InputMode::Normal;
-                                }
-                                _ => {}
-                            },
-                        }
+            terminal
+                .draw(|f| crate::terminal::draw_ui(f, &mut ta, &mut msg))
+                .unwrap();
+
+            if edit {
+                if let Ok(Event::Key(k)) = event::read() {
+                    if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
+                        ta.input(to_input(k));
+                    } else if k.code == KeyCode::Esc {
+                        edit = false;
                     }
+                }
+            } else {
+                if let Ok(Event::Key(KeyEvent {
+                    code: KeyCode::Char(k),
+                    ..
+                })) = event::read()
+                {
+                    if k == 'e' {
+                        edit = true
+                    };
+                    if k == 'q' {
+                        break;
+                    };
+                }
+            }
+        }
+
+        disable_raw_mode().unwrap();
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+        )
+        .unwrap();
+        terminal.show_cursor().unwrap();
+    }
+
+    #[test]
+    fn tui_msg_test() {
+        enable_raw_mode().unwrap();
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
+
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let m = Message::new("Aeskul", "Hello");
+        let o = Message::new("Akachi", "I hate you");
+
+        let mut ta = TextArea::default();
+        ta.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Input")
+                .border_type(tui::widgets::BorderType::Rounded),
+        );
+        let mut msg = TextArea::default();
+        msg.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Messages")
+                .border_type(tui::widgets::BorderType::Rounded),
+        );
+        let mut edit = false;
+
+        msg.insert_str(format!("{m}"));
+        msg.insert_newline();
+        msg.insert_str(format!("{o}"));
+        msg.insert_newline();
+        
+        loop {
+            terminal
+                .draw(|f| crate::terminal::draw_ui(f, &mut ta, &mut msg))
+                .unwrap();
+
+            if edit {
+                if let Ok(Event::Key(k)) = event::read() {
+                    if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
+                        ta.input(to_input(k));
+                    } else if k.code == KeyCode::Esc {
+                        edit = false;
+                    }
+                }
+            } else {
+                if let Ok(Event::Key(KeyEvent {
+                    code,
+                    ..
+                })) = event::read()
+                {
+                    match code {
+                        KeyCode::Char('e') => {
+                            edit = true
+                        },
+                        KeyCode::Char('q') => {
+                            break;
+                        },
+                        KeyCode::Enter => {
+
+                        },
+                        _ => {}
+                    }
+                    
                 }
             }
         }
