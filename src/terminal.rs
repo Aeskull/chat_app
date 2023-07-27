@@ -119,7 +119,7 @@ fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &mut TextArea, msg: &mut TextArea) 
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)].as_ref())
+        .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
         .split(f.size());
 
     f.render_widget(msg_widget, chunks[0]);
