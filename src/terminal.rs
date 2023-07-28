@@ -23,28 +23,30 @@ use tui_textarea::{Input, Key, TextArea};
 ///
 /// Two sets of senders and recievers are made. One Sender is set to the `reciever_loop`, and one Reciever is passed to the `sender_loop`
 pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
-    enable_raw_mode()?;
+    enable_raw_mode()?; // Enable raw mode so we can detect each keystroke.
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?; // Create an alternate screen an swap to it
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::new(backend).unwrap(); // Create the crossterm terminal app
 
-    let (stx, srx) = channel::<String>(100);
-    let (rtx, mut rrx) = channel::<Message>(100);
-    let (sstx, ssrx) = channel::<String>(100);
-    let rip = ip.clone();
+    // Create three sets of channels
+    let (stx, srx) = channel::<String>(25);         // Send the message from the terminal to the sender
+    let (rtx, mut rrx) = channel::<Message>(25);  // Send from the reciever to the terminal (may remove)
+    let (sstx, ssrx) = channel::<String>(25);       // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
 
+    // Spawn the sender and reciever loops
     tokio::spawn(async {
         if let Err(e) = crate::sender::sender_loop(srx, user, ip, sstx).await {
             println!("ERROR: {e}");
         }
     });
     tokio::spawn(async {
-        if let Err(e) = crate::reciever::reciever_loop(rtx, rip, ssrx).await {
+        if let Err(e) = crate::reciever::reciever_loop(rtx, ssrx).await {
             println!("ERROR: {e}");
         }
     });
 
+    // Create the TextArea where the user will be inputting his text. Add a border around it
     let mut text_input = TextArea::default();
     text_input.set_block(
         Block::default()
@@ -53,6 +55,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             .title("Input"),
     );
 
+    // Create the TextArea where the messages will be displayed. Add a border around it, and hide the cursor.
     let mut text_messages = TextArea::default();
     text_messages.set_block(
         Block::default()
@@ -62,10 +65,16 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             .border_type(BorderType::Rounded),
     );
     text_messages.set_cursor_style(Style::default().fg(Color::Black));
-
+        
+    // Main loop
     loop {
+        // Draw the ui for the terminal
         terminal.draw(|f| draw_ui(f, &mut text_input, &mut text_messages))?;
 
+        // Check for key events. Handle them appropriately.
+        // If its an Enter without SHIFT, send the message to the Sender.
+        // If it's Enter with SHIFT, add a newline.
+        // Anything else gets typed into the TextArea.
         if let Ok(Event::Key(k)) = event::read() {
             if k.kind == KeyEventKind::Press
                 && k.code == KeyCode::Enter
@@ -81,6 +90,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             }
         }
 
+        // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
             Some(m) = rrx.recv() => {
                 text_messages.insert_str(format!("{m}"));
@@ -90,6 +100,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         }
     }
 
+    // Undo the alternate screen and raw mode.
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
@@ -101,7 +112,16 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     Ok(())
 }
 
-fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &mut TextArea, msg: &mut TextArea) {
+/// # Draw UI
+/// 
+/// Parameters
+/// 
+/// ```
+/// f: Frame // The frame we are rendering the widgets from
+/// ta: &TextArea // The TextArea where the user is typing
+/// msg: &TextArea // The TextArea where the messages are
+/// ```
+fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &TextArea, msg: &TextArea) {
     let msg_widget = msg.widget();
     let widget = ta.widget();
 
@@ -114,6 +134,14 @@ fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &mut TextArea, msg: &mut TextArea) 
     f.render_widget(widget, chunks[1]);
 }
 
+/// # To Input
+/// 
+/// Parameters:
+/// ```
+/// key: KeyEvent // The key event gotten from crossterm's event::read()
+/// ```
+/// Converts a given KeyEvent into an Input that tui_textarea can read.
+/// ### This is a copy + paste of tui_textarea's From<KeyEvent> implementation, which for some reason was not working.
 fn to_input(key: KeyEvent) -> Input {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
