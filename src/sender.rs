@@ -15,7 +15,7 @@ pub async fn sender_loop(
     ip: String,
     ssx: tokio::sync::mpsc::Sender<String>,
 ) -> Result<()> {
-    let mut f = OpenOptions::new()
+    let _f = OpenOptions::new()
         .append(true)
         .write(true)
         .create(true)
