@@ -1,10 +1,9 @@
 use crate::message::Message;
 use crate::prelude::*;
 use serde_json::json;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use tokio::net::TcpStream;
 use std::fs::OpenOptions;
-use std::io::Write;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 /// ### The main Sender loop.
 ///
@@ -44,7 +43,7 @@ pub async fn sender_loop(
                 }
             },
             Some(m) = tx.recv() => {
-                if m.len() > 0 {
+                if !m.is_empty() {
                     let msg = Message::new(&user, &m);
                     let msg_json = json!(msg).to_string();
 

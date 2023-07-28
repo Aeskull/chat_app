@@ -37,13 +37,11 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     tokio::spawn(async {
         if let Err(e) = crate::sender::sender_loop(srx, user, ip, sstx).await {
             println!("ERROR: {e}");
-            return;
         }
     });
     tokio::spawn(async {
         if let Err(e) = crate::reciever::reciever_loop(rtx, rip, ssrx).await {
             println!("ERROR: {e}");
-            return;
         }
     });
 
@@ -69,7 +67,10 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         terminal.draw(|f| draw_ui(f, &mut text_input, &mut text_messages))?;
 
         if let Ok(Event::Key(k)) = event::read() {
-            if k.kind == KeyEventKind::Press && k.code == KeyCode::Enter && !k.modifiers.contains(KeyModifiers::SHIFT) {
+            if k.kind == KeyEventKind::Press
+                && k.code == KeyCode::Enter
+                && !k.modifiers.contains(KeyModifiers::SHIFT)
+            {
                 let s = text_input.lines().join("\n");
                 stx.send(s).await?;
                 while text_input.delete_char() {}
@@ -141,17 +142,21 @@ fn to_input(key: KeyEvent) -> Input {
 mod tests {
     use crate::message::Message;
     use crate::terminal::to_input;
-    use crossterm::event::{KeyCode, KeyEventKind, EnableMouseCapture, self, Event, KeyEvent, DisableMouseCapture};
+    use crossterm::event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    };
     use crossterm::execute;
-    use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen, disable_raw_mode, LeaveAlternateScreen};
+    use crossterm::terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    };
     use tokio::sync::mpsc::channel;
     use tokio::{
         spawn,
         sync::mpsc::{Receiver, Sender},
     };
-    use tui::Terminal;
     use tui::backend::CrosstermBackend;
     use tui::widgets::{Block, Borders};
+    use tui::Terminal;
     use tui_textarea::TextArea;
 
     /// Test of just figuring out how mpsc channels work.
@@ -221,19 +226,17 @@ mod tests {
                         edit = false;
                     }
                 }
-            } else {
-                if let Ok(Event::Key(KeyEvent {
-                    code: KeyCode::Char(k),
-                    ..
-                })) = event::read()
-                {
-                    if k == 'e' {
-                        edit = true
-                    };
-                    if k == 'q' {
-                        break;
-                    };
-                }
+            } else if let Ok(Event::Key(KeyEvent {
+                code: KeyCode::Char(k),
+                ..
+            })) = event::read()
+            {
+                if k == 'e' {
+                    edit = true
+                };
+                if k == 'q' {
+                    break;
+                };
             }
         }
 
@@ -279,7 +282,7 @@ mod tests {
         msg.insert_newline();
         msg.insert_str(format!("{o}"));
         msg.insert_newline();
-        
+
         loop {
             terminal
                 .draw(|f| crate::terminal::draw_ui(f, &mut ta, &mut msg))
@@ -293,25 +296,14 @@ mod tests {
                         edit = false;
                     }
                 }
-            } else {
-                if let Ok(Event::Key(KeyEvent {
-                    code,
-                    ..
-                })) = event::read()
-                {
-                    match code {
-                        KeyCode::Char('e') => {
-                            edit = true
-                        },
-                        KeyCode::Char('q') => {
-                            break;
-                        },
-                        KeyCode::Enter => {
-
-                        },
-                        _ => {}
+            } else if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
+                match code {
+                    KeyCode::Char('e') => edit = true,
+                    KeyCode::Char('q') => {
+                        break;
                     }
-                    
+                    KeyCode::Enter => {}
+                    _ => {}
                 }
             }
         }

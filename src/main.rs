@@ -1,10 +1,10 @@
 use prelude::*;
 use tokio::task::*;
 
-mod prelude;
-mod sender;
-mod reciever;
 mod message;
+mod prelude;
+mod reciever;
+mod sender;
 mod terminal;
 
 #[tokio::main]
@@ -22,8 +22,8 @@ async fn main() -> Result<()> {
     spawn(async {
         if let Err(e) = terminal::terminal_loop(user, ip).await {
             println!("ERROR: {e}");
-            return;
         }
-    }).await?;
+    })
+    .await?;
     Ok(())
 }
