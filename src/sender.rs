@@ -22,26 +22,20 @@ pub async fn sender_loop(
         .open("log_s.txt")?;
 
     let mut conn = TcpStream::connect(ip).await?;
-    let mut buf = [0u8; 1024];
     loop {
-        match tx.recv().await {
-            Some(m) if m.len() > 0 => {
-                let msg = Message::new(&user, &m);
-                let msg_json = json!(msg).to_string();
-
-                conn.write_all(msg_json.as_bytes()).await?;
-            },
-            _ => {},
-        }
-
+        let mut len_buf = [0u8; 4];
         tokio::select! {
-            result = conn.read(&mut buf) => {
+            result = conn.read_exact(&mut len_buf) => {
                 match result {
                     Ok(0) => break,
-                    Ok(bytes_read) => {
-                        let chunk = String::from_utf8_lossy(&buf[0..bytes_read]);
-                        writeln!(f, "Sending to reciever: {chunk}")?;
-                        ssx.send(chunk.to_string()).await?;
+                    Ok(_) => {
+                        let msg_len = u32::from_be_bytes(len_buf) as usize;
+                        let mut msg_buf = vec![0u8; msg_len];
+                        if conn.read_exact(&mut msg_buf).await.is_err() {
+                            break;
+                        }
+                        let msg = String::from_utf8_lossy(&msg_buf).to_string();
+                        ssx.send(msg).await?;
                     },
                     Err(e) => {
                         eprintln!("Error reading from client: {e:?}");
@@ -49,7 +43,17 @@ pub async fn sender_loop(
                     }
                 }
             },
-            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
+            Some(m) = tx.recv() => {
+                if m.len() > 0 {
+                    let msg = Message::new(&user, &m);
+                    let msg_json = json!(msg).to_string();
+
+                    let msg_len = (msg_json.len() as u32).to_be_bytes();
+
+                    conn.write_all(&[&msg_len, msg_json.as_bytes()].concat()).await?;
+                    conn.flush().await?;
+                }
+            }
         }
     }
     Ok(())
