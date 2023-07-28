@@ -27,7 +27,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?; // Create an alternate screen an swap to it
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).unwrap(); // Create the crossterm terminal app
+    let mut terminal = Terminal::new(backend)?; // Create the crossterm terminal app
 
     // Create three sets of channels
     let (stx, srx) = channel::<String>(25);         // Send the message from the terminal to the sender
