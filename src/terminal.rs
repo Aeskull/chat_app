@@ -69,7 +69,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     // Main loop
     loop {
         // Draw the ui for the terminal
-        terminal.draw(|f| draw_ui(f, &mut text_input, &mut text_messages))?;
+        terminal.draw(|f| draw_ui(f, &text_input, &text_messages))?;
 
         // Check for key events. Handle them appropriately.
         // If its an Enter without SHIFT, send the message to the Sender.
@@ -141,7 +141,7 @@ fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &TextArea, msg: &TextArea) {
 /// key: KeyEvent // The key event gotten from crossterm's event::read()
 /// ```
 /// Converts a given KeyEvent into an Input that tui_textarea can read.
-/// ### This is a copy + paste of tui_textarea's From<KeyEvent> implementation, which for some reason was not working.
+/// ### This is a copy + paste of tui_textarea's `From<KeyEvent>` implementation, which for some reason was not working.
 fn to_input(key: KeyEvent) -> Input {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -243,7 +243,7 @@ mod tests {
         let mut edit = false;
         loop {
             terminal
-                .draw(|f| crate::terminal::draw_ui(f, &mut ta, &mut msg))
+                .draw(|f| crate::terminal::draw_ui(f, &ta, &msg))
                 .unwrap();
 
             if edit {
@@ -313,7 +313,7 @@ mod tests {
 
         loop {
             terminal
-                .draw(|f| crate::terminal::draw_ui(f, &mut ta, &mut msg))
+                .draw(|f| crate::terminal::draw_ui(f, &ta, &msg))
                 .unwrap();
 
             if edit {
