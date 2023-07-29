@@ -70,6 +70,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     loop {
         // Draw the ui for the terminal
         terminal.draw(|f| draw_ui(f, &text_input, &text_messages))?;
+        let frame = terminal.get_frame();
 
         // Check for key events. Handle them appropriately.
         // If its an Enter without SHIFT, send the message to the Sender.
@@ -93,7 +94,28 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
             Some(m) = rrx.recv() => {
-                text_messages.insert_str(format!("{m}"));
+                let header = m.get_header();
+                text_messages.insert_str(header);
+                text_messages.insert_newline();
+
+                let mut msg = format!("{m}");
+                let len = msg.len();
+                let mut counter = 0;
+                for idx in 0..len {
+                    if (idx % frame.size().width as usize) == 0 && idx > 0 {
+                        msg.insert(idx + counter, '\n');
+                        counter += 1;
+                    }
+                }
+
+                for (idx, line) in msg.lines().enumerate() {
+                    if idx == 0 {
+                        text_messages.insert_str(line);
+                    } else {
+                        text_messages.insert_str(format!("{line}"));
+                    }
+                    text_messages.insert_newline();
+                }
                 text_messages.insert_newline();
             },
             _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}

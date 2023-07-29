@@ -1,12 +1,13 @@
 use crate::{message::Message, prelude::*};
 use serde_json::from_str;
+use tokio::sync::mpsc::{Sender, Receiver};
 
 /// ### The main reciever function
 ///
 /// It will be listening for incoming messages. If one is found, it will parse it and display it.
 pub async fn reciever_loop(
-    tx: tokio::sync::mpsc::Sender<Message>,
-    mut srx: tokio::sync::mpsc::Receiver<String>,
+    tx: Sender<Message>,
+    mut srx: Receiver<String>,
 ) -> Result<()> {
     loop {
         if let Some(m) = srx.recv().await {

@@ -33,12 +33,17 @@ impl Message {
             payload: payload.to_owned(),
         }
     }
+
+    /// Get's the length of the header of the message (The username and time)
+    pub fn get_header(&self) -> String {
+        format!("{} @ {}: ", self.from, self.time)
+    }
 }
 
 /// Implement Display for Message
 impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} @ {}: {}", self.from, self.time, self.payload)
+        write!(f, "{}", self.payload)
     }
 }
 

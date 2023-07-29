@@ -14,7 +14,14 @@ pub async fn sender_loop(
     ssx: tokio::sync::mpsc::Sender<String>,
 ) -> Result<()> {
     // Make the connection to the server
-    let mut conn = TcpStream::connect(ip).await?;
+    // let mut conn = TcpStream::connect(ip).await?;
+    let mut conn = match TcpStream::connect(ip).await {
+        Ok(conn) => conn,
+        Err(_e) => {
+            // eprintln!("ERROR: {e}\nDefaulting to '127.0.0.1:8080'");
+            TcpStream::connect("127.0.0.1:8080").await?
+        }
+    };
 
     // Main loop
     loop {
