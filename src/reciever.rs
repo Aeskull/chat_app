@@ -11,6 +11,9 @@ pub async fn reciever_loop(
 ) -> Result<()> {
     loop {
         if let Some(m) = srx.recv().await {
+            if m == "Close" { // Check for close message.
+                return Ok(()); // Return on close.
+            }
             let msg = from_str::<Message>(&m)?;
             let Ok(_) = tx.send(msg).await else {
                 return Ok(());

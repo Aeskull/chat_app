@@ -42,8 +42,12 @@ pub async fn sender_loop(
                         let msg = String::from_utf8_lossy(&msg_buf).to_string(); // Convert the package to a string.
                         ssx.send(msg).await?; // Send to the reciever.
                     },
+                    Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => {
+                        ssx.send("Close".to_owned()).await?;
+                        break; // Break on close message.
+                    },
                     Err(e) => {
-                        eprintln!("Error reading from client: {e:?}");
+                        eprintln!("Error reading from server: {e:?}");
                         break; // Break on error.
                     }
                 }

@@ -106,32 +106,43 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
             // Try and recieve a message
-            Some(m) = rrx.recv() => {
-                let header = m.get_header();
-                text_messages.insert_str(header);
-                text_messages.insert_newline();
+            o_msg = rrx.recv() => {
+                if let Some(m) = o_msg {
+                    let header = m.get_header();
+                    text_messages.insert_str(header);
+                    text_messages.insert_newline();
 
-                let mut msg = format!("{m}");
-                let len = msg.len();
-                let mut counter = 0;
-                for idx in 0..len {
-                    // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
-                    if (idx % frame.size().width as usize) == 0 && idx > 0 {
-                        msg.insert(idx + counter, '\n');
-                        counter += 1;
+                    let mut msg = format!("{m}");
+                    let len = msg.len();
+                    let mut counter = 0;
+                    for idx in 0..len {
+                        // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
+                        if (idx % frame.size().width as usize) == 0 && idx > 0 {
+                            msg.insert(idx + counter, '\n');
+                            counter += 1;
+                        }
                     }
-                }
 
-                // Display the recieved message
-                for (idx, line) in msg.lines().enumerate() {
-                    if idx == 0 {
-                        text_messages.insert_str(line);
-                    } else {
-                        text_messages.insert_str(format!("{line}"));
+                    // Display the recieved message
+                    for (idx, line) in msg.lines().enumerate() {
+                        if idx == 0 {
+                            text_messages.insert_str(line);
+                        } else {
+                            text_messages.insert_str(format!("{line}"));
+                        }
+                        text_messages.insert_newline();
                     }
                     text_messages.insert_newline();
+                } else {
+                    execute!(
+                        terminal.backend_mut(),
+                        LeaveAlternateScreen,
+                        DisableMouseCapture,
+                    )?;
+                    terminal.show_cursor()?;
+                    disable_raw_mode()?;
+                    return Err(Box::new(MyError::new("The connection was forcibly closed by the server")));
                 }
-                text_messages.insert_newline();
             },
             // Wait for a millisecond. Continue the loop if this elapses.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
