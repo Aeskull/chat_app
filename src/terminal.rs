@@ -30,9 +30,9 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     let mut terminal = Terminal::new(backend)?; // Create the crossterm terminal app
 
     // Create three sets of channels
-    let (stx, srx) = channel::<String>(25);         // Send the message from the terminal to the sender
-    let (rtx, mut rrx) = channel::<Message>(25);  // Send from the reciever to the terminal (may remove)
-    let (sstx, ssrx) = channel::<String>(25);       // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
+    let (stx, srx) = channel::<String>(25); // Send the message from the terminal to the sender
+    let (rtx, mut rrx) = channel::<Message>(25); // Send from the reciever to the terminal (may remove)
+    let (sstx, ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
 
     // Spawn the sender and reciever loops
     tokio::spawn(async {
@@ -65,7 +65,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             .border_type(BorderType::Rounded),
     );
     text_messages.set_cursor_style(Style::default().fg(Color::Black));
-        
+
     // Main loop
     loop {
         // Draw the ui for the terminal
@@ -76,23 +76,36 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         // If its an Enter without SHIFT, send the message to the Sender.
         // If it's Enter with SHIFT, add a newline.
         // Anything else gets typed into the TextArea.
-        if let Ok(Event::Key(k)) = event::read() {
-            if k.kind == KeyEventKind::Press
-                && k.code == KeyCode::Enter
-                && !k.modifiers.contains(KeyModifiers::SHIFT)
-            {
+        match event::read() {
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            })) if !modifiers.contains(KeyModifiers::SHIFT) => {
                 let s = text_input.lines().join("\n");
                 stx.send(s).await?;
                 while text_input.delete_char() {}
-            } else if k.kind == KeyEventKind::Press && k.code != KeyCode::Esc {
-                text_input.input(to_input(k));
-            } else if k.code == KeyCode::Esc {
-                break;
             }
+            Ok(Event::Key(
+                k @ KeyEvent {
+                    code,
+                    kind: KeyEventKind::Press,
+                    ..
+                },
+            )) if code != KeyCode::Esc => {
+                text_input.input(to_input(k));
+            }
+            Ok(Event::Key(KeyEvent {
+                code: KeyCode::Esc, ..
+            })) => break,
+            Err(_) => panic!("An error has occured upon reading input"),
+            _ => {}
         }
 
         // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
+            // Try and recieve a message
             Some(m) = rrx.recv() => {
                 let header = m.get_header();
                 text_messages.insert_str(header);
@@ -102,12 +115,14 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
                 let len = msg.len();
                 let mut counter = 0;
                 for idx in 0..len {
+                    // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
                     if (idx % frame.size().width as usize) == 0 && idx > 0 {
                         msg.insert(idx + counter, '\n');
                         counter += 1;
                     }
                 }
 
+                // Display the recieved message
                 for (idx, line) in msg.lines().enumerate() {
                     if idx == 0 {
                         text_messages.insert_str(line);
@@ -118,6 +133,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
                 }
                 text_messages.insert_newline();
             },
+            // Wait for a millisecond. Continue the loop if this elapses.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
         }
     }
@@ -135,9 +151,9 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
 }
 
 /// # Draw UI
-/// 
+///
 /// Parameters
-/// 
+///
 /// ```
 /// f: Frame // The frame we are rendering the widgets from
 /// ta: &TextArea // The TextArea where the user is typing
@@ -157,7 +173,7 @@ fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &TextArea, msg: &TextArea) {
 }
 
 /// # To Input
-/// 
+///
 /// Parameters:
 /// ```
 /// key: KeyEvent // The key event gotten from crossterm's event::read()
