@@ -19,7 +19,7 @@ pub async fn sender_loop(
         Ok(conn) => conn,
         Err(_e) => {
             // eprintln!("ERROR: {e}\nDefaulting to '127.0.0.1:8080'");
-            TcpStream::connect("127.0.0.1:8080").await?
+            TcpStream::connect("127.0.0.1:42530").await?
         }
     };
 
