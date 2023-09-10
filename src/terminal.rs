@@ -37,12 +37,12 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     // Spawn the sender and reciever loops
     tokio::spawn(async {
         if let Err(e) = crate::sender::sender_loop(srx, user, ip, sstx).await {
-            println!("ERROR: {e}");
+            println!("{e:?}");
         }
     });
     tokio::spawn(async {
         if let Err(e) = crate::reciever::reciever_loop(rtx, ssrx).await {
-            println!("ERROR: {e}");
+            println!("{e:?}");
         }
     });
 

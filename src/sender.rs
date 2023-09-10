@@ -1,7 +1,7 @@
 use crate::message::Message;
 use crate::prelude::*;
 use openssl::symm::{Cipher, encrypt, decrypt};
-use openssl::pkey::Public;
+use openssl::pkey::Private;
 use openssl::rsa::{Padding, Rsa};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -32,7 +32,7 @@ pub async fn sender_loop(
     let cl_rsa = Rsa::generate(RSA_SIZE)?;
     let ciph = Cipher::aes_256_cbc();
     let iv = gen_rand_iv(ciph.block_size());
-    let mut sv_pub_key: Option<Rsa<Public>> = None;
+    let mut sv_prv_key: Option<Rsa<Private>> = None;
 
     {
         let pub_key = cl_rsa.public_key_to_der()?;
@@ -58,41 +58,51 @@ pub async fn sender_loop(
                         let key_len = u32::from_be_bytes(len_buf) as usize; // Parse to usize.
                         let typ = String::from_utf8_lossy(&key_buf).to_string(); // Get the type of the packet.
                         match typ.as_str() {
-                            "PUB" => {
+                            "PRV" => {
                                 let mut key = vec![0u8; key_len];
                                 if stream.read_exact(&mut key).await.is_err() {
                                     break;
                                 }
-                                sv_pub_key = Some(Rsa::public_key_from_der(&key)?);
+                                let symm = {
+                                    let mut t = vec![0u8; RSA_SIZE as usize];
+                                    let l = cl_rsa.private_decrypt(&key, &mut t, Padding::PKCS1)?;
+                                    t[0..l].to_owned()
+                                };
+                                let mut der_len_buf = [0u8; 4];
+                                if stream.read_exact(&mut der_len_buf).await.is_err() {
+                                    break;
+                                }
+                                let der_len = u32::from_be_bytes(der_len_buf);
+                                let mut der_enc = vec![0u8; der_len as usize];
+                                stream.read_exact(&mut der_enc).await?;
+                                let der = decrypt(ciph, &symm, None, &der_enc)?;
+                                sv_prv_key = Some(Rsa::private_key_from_der(&der)?);
                             },
                             "ENC" => {
-                                if sv_pub_key.is_some() {
+                                if sv_prv_key.is_some() {
                                     let mut key = vec![0u8; key_len];
                                     stream.read_exact(&mut key).await?;
 
-                                    let mut msg_hed = [0u8; 3];
-                                    stream.read_exact(&mut msg_hed).await?;
-                                    if &msg_hed == b"MSG" {
-                                        let mut msg_len = [0u8; 4];
-                                        stream.read_exact(&mut msg_len).await?;
-                                        let len = u32::from_be_bytes(msg_len) as usize;
-                                        let mut msg = vec![0u8; len];
-                                        stream.read_exact(&mut msg).await?;
+                                    let mut msg_len = [0u8; 4];
+                                    stream.read_exact(&mut msg_len).await?;
+                                    let len = u32::from_be_bytes(msg_len) as usize;
+                                    let mut msg = vec![0u8; len];
+                                    stream.read_exact(&mut msg).await?;
+                                        
+                                    let Some(dec_key) = sv_prv_key.as_mut() else {
+                                        break;
+                                    };
 
-                                        let dec_key = {
-                                            let mut t = vec![0u8; RSA_SIZE as usize];
-                                            let len = cl_rsa.private_decrypt(&key, &mut t, Padding::PKCS1)?;
-                                            t[0..len].to_owned()
-                                        };
+                                    let k = {
+                                        let mut t = vec![0u8; RSA_SIZE as usize];
+                                        let len = dec_key.private_decrypt(&key, &mut t, Padding::PKCS1)?;
+                                        t[0..len].to_owned()
+                                    };
 
-                                        decrypt(ciph, &dec_key, Some(&iv), &msg)?;
-                                        let msg_str = String::from_utf8_lossy(&msg);
-                                        ssx.send(msg_str.to_string()).await?;
-                                    } else {
-                                        stream.shutdown().await?;
-                                        eprintln!("An error has occured");
-                                        return Ok(());
-                                    }
+                                    let msg_str = decrypt(ciph, &k, Some(&iv), &msg)?;
+
+                                    let msg_str = String::from_utf8_lossy(&msg_str);
+                                    ssx.send(msg_str.to_string()).await?;
                                     
                                 } else {
                                     eprintln!("No");
@@ -113,7 +123,7 @@ pub async fn sender_loop(
             },
             Some(m) = tx.recv() => { // Check for message from the terminal.
                 if !m.is_empty() {
-                    if let Some(pub_rsa) = &sv_pub_key {
+                    if let Some(prv_rsa) = &sv_prv_key {
                         let msg = Message::new(&user, &m);      // Create the message struct.
                         let msg_bytes = {
                             let t = json!(msg).to_string();
@@ -124,16 +134,15 @@ pub async fn sender_loop(
                         let msg_enc = encrypt(ciph, &key, Some(&iv), &msg_bytes)?;
                         let key_enc = {
                             let mut t = vec![0u8; RSA_SIZE as usize];
-                            let len = pub_rsa.public_encrypt(&key, &mut t, Padding::PKCS1)?;
+                            let len = prv_rsa.public_encrypt(&key, &mut t, Padding::PKCS1)?;
                             t[0..len].to_owned()
                         };
 
                         let msg_len = (msg_enc.len() as u32).to_be_bytes(); // Write the length header.
                         let key_len = (key_enc.len() as u32).to_be_bytes();
                         let key_header = "ENC".as_bytes();
-                        let msg_header = "MSG".as_bytes();
 
-                        stream.write_all(&[key_header, &key_len, &key_enc, msg_header, &msg_len, &msg_enc].concat()).await?; // Write the header and the json to the connection.
+                        stream.write_all(&[key_header, &key_len, &key_enc, &msg_len, &msg_enc].concat()).await?; // Write the header and the json to the connection.
                         stream.flush().await?; // Flush the connection buffer.
                     }
                 }

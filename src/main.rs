@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     // Spawn terminal thread
     spawn(async {
         if let Err(e) = terminal::terminal_loop(user, ip).await {
-            println!("ERROR: {e}");
+            println!("{e:?}");
         }
     })
     .await?;
