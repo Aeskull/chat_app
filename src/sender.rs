@@ -1,5 +1,8 @@
 use crate::message::Message;
-use crate::prelude::*;
+use crate::prelude::ConnectionError;
+use openssl::symm::{Cipher, encrypt, decrypt};
+use openssl::pkey::Private;
+use openssl::rsa::{Padding, Rsa};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -8,42 +11,116 @@ use tokio::net::TcpStream;
 ///
 /// Loops ad infinitum. It will handle input, parsing of input, and recieving data to be sent to the reciever.
 pub async fn sender_loop(
-    mut tx: tokio::sync::mpsc::Receiver<String>,
+    mut rx: tokio::sync::mpsc::Receiver<String>,
+    stx: tokio::sync::mpsc::Sender<String>,
+    sox: tokio::sync::oneshot::Sender<bool>,
     user: String,
     ip: String,
-    ssx: tokio::sync::mpsc::Sender<String>,
-) -> Result<()> {
+) -> Result<(), ConnectionError> {
+    const RSA_SIZE: u32 = 2048;
+    const SYMM_SIZE: usize = 32;
+    let mut first = true;
+
     // Make the connection to the server
-    // let mut conn = TcpStream::connect(ip).await?;
-    let mut conn = match TcpStream::connect(ip).await {
+    let mut stream = match TcpStream::connect(ip).await {
         Ok(conn) => conn,
         Err(_e) => {
-            // eprintln!("ERROR: {e}\nDefaulting to '127.0.0.1:8080'");
-            TcpStream::connect("127.0.0.1:42530").await?
+            match TcpStream::connect("127.0.0.1:42530").await {
+                Ok(t) => t,
+                Err(e) => {
+                    sox.send(true).unwrap();
+                    return Err(ConnectionError::new(&e.kind().to_string()));
+                }
+            }
         }
     };
 
+    let cl_rsa = Rsa::generate(RSA_SIZE).unwrap();
+    let ciph = Cipher::aes_256_cbc();
+    let iv = gen_rand_iv(ciph.block_size());
+    let mut sv_prv_key: Option<Rsa<Private>> = None;
+
+    {
+        let pub_key = cl_rsa.public_key_to_der().unwrap();
+        let key_len = (pub_key.len() as u32).to_be_bytes();
+        let header = "PUB".as_bytes();
+        stream
+            .write_all(&[header, &key_len, &pub_key].concat())
+            .await
+            .unwrap();
+    }
+
     // Main loop
     loop {
-        let mut len_buf = [0u8; 4]; // Length buffer at the beginning of the package.
+        let mut key_buf = [0u8; 3]; // Buffer to determine type of message.
+        let mut len_buf = [0u8; 4]; // Length buffer at the beginning of the packet.
 
-        // Check for either an incoming package to be sent to the server, or a package from the server.
+        // Check for either an incoming packet to be sent to the server, or a packet from the server.
         tokio::select! {
-            result = conn.read_exact(&mut len_buf) => { // Check for message from server.
+            result = stream.read_exact(&mut key_buf) => { // Check for message from server.
                 match result {
-                    Ok(0) => break, // Break if the connection was closed.
+                    Ok(0) => {
+                        stx.send("C".to_owned()).await.unwrap(); // Close on connection terminated
+                        break; // Break on close message.
+                    },
                     Ok(_) => {
-                        // Get the length from the package header
-                        let msg_len = u32::from_be_bytes(len_buf) as usize;
-                        let mut msg_buf = vec![0u8; msg_len]; // Allocate a vector from the package's header.
-                        if conn.read_exact(&mut msg_buf).await.is_err() {
-                            break;
+                        stream.read_exact(&mut len_buf).await.unwrap(); // Get the length
+                        let key_len = u32::from_be_bytes(len_buf) as usize; // Parse to usize.
+                        let typ = String::from_utf8_lossy(&key_buf).to_string(); // Get the type of the packet.
+                        match typ.as_str() {
+                            "PRV" if first => {
+                                let mut key = vec![0u8; key_len];
+                                stream.read_exact(&mut key).await.unwrap();
+                                let symm = {
+                                    let mut t = vec![0u8; RSA_SIZE as usize];
+                                    let l = cl_rsa.private_decrypt(&key, &mut t, Padding::PKCS1).unwrap();
+                                    t[0..l].to_owned()
+                                };
+                                let mut der_len_buf = [0u8; 4];
+                                stream.read_exact(&mut der_len_buf).await.unwrap();
+                                let der_len = u32::from_be_bytes(der_len_buf);
+                                let mut der_enc = vec![0u8; der_len as usize];
+                                stream.read_exact(&mut der_enc).await.unwrap();
+                                let der = decrypt(ciph, &symm, None, &der_enc).unwrap();
+                                sv_prv_key = Some(Rsa::private_key_from_der(&der).unwrap());
+
+                                first = false;
+                            },
+                            "ENC" => {
+                                if sv_prv_key.is_some() {
+                                    let mut key = vec![0u8; key_len];
+                                    stream.read_exact(&mut key).await.unwrap();
+
+                                    let mut msg_len = [0u8; 4];
+                                    stream.read_exact(&mut msg_len).await.unwrap();
+                                    let len = u32::from_be_bytes(msg_len) as usize;
+                                    let mut msg = vec![0u8; len];
+                                    stream.read_exact(&mut msg).await.unwrap();
+                                        
+                                    let Some(dec_key) = sv_prv_key.as_mut() else {
+                                        break;
+                                    };
+
+                                    let k = {
+                                        let mut t = vec![0u8; RSA_SIZE as usize];
+                                        let len = dec_key.private_decrypt(&key, &mut t, Padding::PKCS1).unwrap();
+                                        t[0..len].to_owned()
+                                    };
+
+                                    let msg_str = decrypt(ciph, &k, Some(&iv), &msg).unwrap();
+
+                                    let msg_str = String::from_utf8_lossy(&msg_str);
+                                    stx.send(msg_str.to_string()).await.unwrap();
+                                    
+                                } else {
+                                    eprintln!("No");
+                                }
+                            },
+                            _ => return Ok(()),
                         }
-                        let msg = String::from_utf8_lossy(&msg_buf).to_string(); // Convert the package to a string.
-                        ssx.send(msg).await?; // Send to the reciever.
                     },
                     Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => {
-                        ssx.send("Close".to_owned()).await?;
+                        stx.send("C".to_owned()).await.unwrap();
                         break; // Break on close message.
                     },
                     Err(e) => {
@@ -52,20 +129,47 @@ pub async fn sender_loop(
                     }
                 }
             },
-            Some(m) = tx.recv() => { // Check for message from the terminal.
+            Some(m) = rx.recv() => { // Check for message from the terminal.
                 if !m.is_empty() {
-                    let msg = Message::new(&user, &m);      // Create the message struct.
-                    let msg_json = json!(msg).to_string();  // Parse it to a json.
+                    if let Some(prv_rsa) = &sv_prv_key {
+                        let msg = Message::new(&user, &m);      // Create the message struct.
+                        let msg_bytes = {
+                            let t = json!(msg).to_string();
+                            t.as_bytes().to_vec()
+                        };
+                        let key = gen_rand_symm(SYMM_SIZE);
 
-                    let msg_len = (msg_json.len() as u32).to_be_bytes(); // Write the length header.
+                        let msg_enc = encrypt(ciph, &key, Some(&iv), &msg_bytes).unwrap();
+                        let key_enc = {
+                            let mut t = vec![0u8; RSA_SIZE as usize];
+                            let len = prv_rsa.public_encrypt(&key, &mut t, Padding::PKCS1).unwrap();
+                            t[0..len].to_owned()
+                        };
 
-                    conn.write_all(&[&msg_len, msg_json.as_bytes()].concat()).await?; // Write the header and the json to the connection.
-                    conn.flush().await?; // Flush the connection buffer.
+                        let msg_len = (msg_enc.len() as u32).to_be_bytes(); // Write the length header.
+                        let key_len = (key_enc.len() as u32).to_be_bytes();
+                        let key_header = "ENC".as_bytes();
+
+                        stream.write_all(&[key_header, &key_len, &key_enc, &msg_len, &msg_enc].concat()).await.unwrap(); // Write the header and the json to the connection.
+                        stream.flush().await.unwrap(); // Flush the connection buffer.
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn gen_rand_symm(prec: usize) -> Vec<u8> {
+    let mut key = vec![0u8; prec];
+    openssl::rand::rand_bytes(&mut key).unwrap();
+    key
+}
+
+fn gen_rand_iv(block_size: usize) -> Vec<u8> {
+    let mut key = vec![0u8; block_size];
+    openssl::rand::rand_bytes(&mut key).unwrap();
+    key
 }
 
 #[cfg(test)]

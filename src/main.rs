@@ -3,7 +3,6 @@ use tokio::task::*;
 
 mod message;
 mod prelude;
-mod reciever;
 mod sender;
 mod terminal;
 
@@ -24,7 +23,7 @@ async fn main() -> Result<()> {
     // Spawn terminal thread
     spawn(async {
         if let Err(e) = terminal::terminal_loop(user, ip).await {
-            println!("ERROR: {e}");
+            println!("{}", e.message());
         }
     })
     .await?;

@@ -1,4 +1,6 @@
-use crate::{message::Message, prelude::*};
+use std::io::Stdout;
+
+use crate::{message::Message, prelude::ConnectionError};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -8,7 +10,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use tokio::sync::mpsc::channel;
-use tui::{
+use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
@@ -22,27 +24,23 @@ use tui_textarea::{Input, Key, TextArea};
 /// Both the `sender_loop` and `reciever_loop` start from here.
 ///
 /// Two sets of senders and recievers are made. One Sender is set to the `reciever_loop`, and one Reciever is passed to the `sender_loop`
-pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
-    enable_raw_mode()?; // Enable raw mode so we can detect each keystroke.
+pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionError> {
+    enable_raw_mode().unwrap(); // Enable raw mode so we can detect each keystroke.
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?; // Create an alternate screen an swap to it
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap(); // Create an alternate screen an swap to it
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?; // Create the crossterm terminal app
+    let mut terminal = Terminal::new(backend).unwrap(); // Create the crossterm terminal app
 
     // Create three sets of channels
     let (stx, srx) = channel::<String>(25); // Send the message from the terminal to the sender
-    let (rtx, mut rrx) = channel::<Message>(25); // Send from the reciever to the terminal (may remove)
-    let (sstx, ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
+    let (sstx, mut ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
+    let (sox, mut rox) = tokio::sync::oneshot::channel::<bool>();
 
-    // Spawn the sender and reciever loops
-    tokio::spawn(async {
-        if let Err(e) = crate::sender::sender_loop(srx, user, ip, sstx).await {
-            println!("ERROR: {e}");
-        }
-    });
-    tokio::spawn(async {
-        if let Err(e) = crate::reciever::reciever_loop(rtx, ssrx).await {
-            println!("ERROR: {e}");
+    // Spawn the sender loop
+    let sender = tokio::spawn(async {
+        match crate::sender::sender_loop(srx, sstx, sox, user, ip).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(ConnectionError::new(&format!("{e:?}")))
         }
     });
 
@@ -52,7 +50,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Input"),
+            .title("Input")
     );
 
     // Create the TextArea where the messages will be displayed. Add a border around it, and hide the cursor.
@@ -62,15 +60,25 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             .title("Messages")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White))
-            .border_type(BorderType::Rounded),
+            .border_type(BorderType::Rounded)
     );
     text_messages.set_cursor_style(Style::default().fg(Color::Black));
 
     // Main loop
     loop {
         // Draw the ui for the terminal
-        terminal.draw(|f| draw_ui(f, &text_input, &text_messages))?;
+        if let Err(e) = terminal.draw(|f| draw_ui(f, &text_input, &text_messages)) {
+            return Err(ConnectionError::new(&e.kind().to_string()));
+        };
         let frame = terminal.get_frame();
+
+        if let Ok(true) = rox.try_recv() {
+            if let Err(e) = leave_terminal(terminal) {
+                println!("{e}");
+            };
+            sender.await.unwrap()?;
+            return Ok(());
+        }
 
         // Check for key events. Handle them appropriately.
         // If its an Enter without SHIFT, send the message to the Sender.
@@ -84,7 +92,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
                 ..
             })) if !modifiers.contains(KeyModifiers::SHIFT) => {
                 let s = text_input.lines().join("\n");
-                stx.send(s).await?;
+                stx.send(s).await.unwrap();
                 while text_input.delete_char() {}
             }
             Ok(Event::Key(
@@ -106,43 +114,39 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
             // Try and recieve a message
-            o_msg = rrx.recv() => {
-                if let Some(m) = o_msg {
-                    let header = m.get_header();
-                    text_messages.insert_str(header);
-                    text_messages.insert_newline();
-
-                    let mut msg = format!("{m}");
-                    let len = msg.len();
-                    let mut counter = 0;
-                    for idx in 0..len {
-                        // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
-                        if (idx % frame.size().width as usize) == 0 && idx > 0 {
-                            msg.insert(idx + counter, '\n');
-                            counter += 1;
-                        }
-                    }
-
-                    // Display the recieved message
-                    for (idx, line) in msg.lines().enumerate() {
-                        if idx == 0 {
-                            text_messages.insert_str(line);
-                        } else {
-                            text_messages.insert_str(format!("{line}"));
-                        }
-                        text_messages.insert_newline();
-                    }
-                    text_messages.insert_newline();
-                } else {
-                    execute!(
-                        terminal.backend_mut(),
-                        LeaveAlternateScreen,
-                        DisableMouseCapture,
-                    )?;
-                    terminal.show_cursor()?;
-                    disable_raw_mode()?;
-                    return Err(Box::new(MyError::new("The connection was forcibly closed by the server")));
+            Some(s) = ssrx.recv() => {
+                if s == "C" {
+                    if let Err(e) = leave_terminal(terminal) {
+                        println!("{e}");
+                    };
+                    return Err(ConnectionError::new("The connection was forcibly closed by the server"));
                 }
+                let m = serde_json::from_str::<Message>(&s).unwrap();
+                let header = m.get_header();
+                text_messages.insert_str(header);
+                text_messages.insert_newline();
+
+                let mut msg = format!("{m}");
+                let len = msg.len();
+                let mut counter = 0;
+                for idx in 0..len {
+                    // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
+                    if (idx % frame.size().width as usize) == 0 && idx > 0 {
+                        msg.insert(idx + counter, '\n');
+                        counter += 1;
+                    }
+                }
+
+                // Display the recieved message
+                for (idx, line) in msg.lines().enumerate() {
+                    if idx == 0 {
+                        text_messages.insert_str(line);
+                    } else {
+                        text_messages.insert_str(format!("{line}"));
+                    }
+                    text_messages.insert_newline();
+                }
+                text_messages.insert_newline();
             },
             // Wait for a millisecond. Continue the loop if this elapses.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
@@ -150,13 +154,9 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
     }
 
     // Undo the alternate screen and raw mode.
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-    disable_raw_mode()?;
+    if let Err(e) = leave_terminal(terminal) {
+        println!("{e}");
+    };
 
     Ok(())
 }
@@ -215,6 +215,17 @@ fn to_input(key: KeyEvent) -> Input {
     Input { key, ctrl, alt }
 }
 
+fn leave_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> std::io::Result<()> {
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+    )?;
+    terminal.show_cursor()?;
+    disable_raw_mode()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::message::Message;
@@ -231,9 +242,9 @@ mod tests {
         spawn,
         sync::mpsc::{Receiver, Sender},
     };
-    use tui::backend::CrosstermBackend;
-    use tui::widgets::{Block, Borders};
-    use tui::Terminal;
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::widgets::{Block, Borders};
+    use ratatui::Terminal;
     use tui_textarea::TextArea;
 
     /// Test of just figuring out how mpsc channels work.
@@ -280,14 +291,14 @@ mod tests {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Input")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut msg = TextArea::default();
         msg.set_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Messages")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut edit = false;
         loop {
@@ -344,14 +355,14 @@ mod tests {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Input")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut msg = TextArea::default();
         msg.set_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Messages")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut edit = false;
 
