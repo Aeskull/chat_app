@@ -67,7 +67,9 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
     // Main loop
     loop {
         // Draw the ui for the terminal
-        terminal.draw(|f| draw_ui(f, &text_input, &text_messages)).unwrap();
+        if let Err(e) = terminal.draw(|f| draw_ui(f, &text_input, &text_messages)) {
+            return Err(ConnectionError::new(&e.kind().to_string()));
+        };
         let frame = terminal.get_frame();
 
         if let Ok(true) = rox.try_recv() {
