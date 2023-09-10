@@ -34,13 +34,12 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
     // Create three sets of channels
     let (stx, srx) = channel::<String>(25); // Send the message from the terminal to the sender
     let (sstx, mut ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
-    let (sox, mut rox) = tokio::sync::oneshot::channel::<bool>();
 
     // Spawn the sender loop
-    let sender = tokio::spawn(async {
-        match crate::sender::sender_loop(srx, sstx, sox, user, ip).await {
+    let mut sender = tokio::spawn(async {
+        match crate::sender::sender_loop(srx, sstx, user, ip).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(ConnectionError::new(&format!("{e:?}")))
+            Err(e) => Err(e)
         }
     });
 
@@ -71,14 +70,6 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
             return Err(ConnectionError::new(&e.kind().to_string()));
         };
         let frame = terminal.get_frame();
-
-        if let Ok(true) = rox.try_recv() {
-            if let Err(e) = leave_terminal(terminal) {
-                println!("{e}");
-            };
-            sender.await.unwrap()?;
-            return Ok(());
-        }
 
         // Check for key events. Handle them appropriately.
         // If its an Enter without SHIFT, send the message to the Sender.
@@ -148,6 +139,12 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
                 }
                 text_messages.insert_newline();
             },
+            Ok(e) = &mut sender => {
+                if let Err(e) = leave_terminal(terminal) {
+                    println!("{e}");
+                };
+                return e;
+            }
             // Wait for a millisecond. Continue the loop if this elapses.
             _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
         }

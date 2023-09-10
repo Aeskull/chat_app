@@ -13,7 +13,6 @@ use tokio::net::TcpStream;
 pub async fn sender_loop(
     mut rx: tokio::sync::mpsc::Receiver<String>,
     stx: tokio::sync::mpsc::Sender<String>,
-    sox: tokio::sync::oneshot::Sender<bool>,
     user: String,
     ip: String,
 ) -> Result<(), ConnectionError> {
@@ -24,17 +23,16 @@ pub async fn sender_loop(
     // Make the connection to the server
     let mut stream = match TcpStream::connect(ip).await {
         Ok(conn) => conn,
-        Err(_e) => {
+        Err(_) => {
             match TcpStream::connect("127.0.0.1:42530").await {
                 Ok(t) => t,
-                Err(e) => {
-                    sox.send(true).unwrap();
-                    return Err(ConnectionError::new(&e.kind().to_string()));
-                }
+                Err(_) => {
+                    return Err(ConnectionError::new("connection refused"))
+                },
             }
         }
     };
-
+    
     let cl_rsa = Rsa::generate(RSA_SIZE).unwrap();
     let ciph = Cipher::aes_256_cbc();
     let iv = gen_rand_iv(ciph.block_size());
