@@ -8,7 +8,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use tokio::sync::mpsc::channel;
-use tui::{
+use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
@@ -234,9 +234,9 @@ mod tests {
         spawn,
         sync::mpsc::{Receiver, Sender},
     };
-    use tui::backend::CrosstermBackend;
-    use tui::widgets::{Block, Borders};
-    use tui::Terminal;
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::widgets::{Block, Borders};
+    use ratatui::Terminal;
     use tui_textarea::TextArea;
 
     /// Test of just figuring out how mpsc channels work.
@@ -283,14 +283,14 @@ mod tests {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Input")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut msg = TextArea::default();
         msg.set_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Messages")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut edit = false;
         loop {
@@ -347,14 +347,14 @@ mod tests {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Input")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut msg = TextArea::default();
         msg.set_block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Messages")
-                .border_type(tui::widgets::BorderType::Rounded),
+                .border_type(ratatui::widgets::BorderType::Rounded),
         );
         let mut edit = false;
 
