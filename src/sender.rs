@@ -11,13 +11,14 @@ use tokio::net::TcpStream;
 ///
 /// Loops ad infinitum. It will handle input, parsing of input, and recieving data to be sent to the reciever.
 pub async fn sender_loop(
-    mut tx: tokio::sync::mpsc::Receiver<String>,
+    mut rx: tokio::sync::mpsc::Receiver<String>,
     user: String,
     ip: String,
-    ssx: tokio::sync::mpsc::Sender<String>,
+    stx: tokio::sync::mpsc::Sender<String>,
 ) -> Result<()> {
     const RSA_SIZE: u32 = 2048;
     const SYMM_SIZE: usize = 32;
+    let mut first = true;
 
     // Make the connection to the server
     // let mut conn = TcpStream::connect(ip).await?;
@@ -52,31 +53,32 @@ pub async fn sender_loop(
         tokio::select! {
             result = stream.read_exact(&mut key_buf) => { // Check for message from server.
                 match result {
-                    Ok(0) => break, // Break if the connection was closed.
+                    Ok(0) => {
+                        stx.send("C".to_owned()).await?; // Close on connection terminated
+                        break; // Break on close message.
+                    },
                     Ok(_) => {
                         stream.read_exact(&mut len_buf).await?; // Get the length
                         let key_len = u32::from_be_bytes(len_buf) as usize; // Parse to usize.
                         let typ = String::from_utf8_lossy(&key_buf).to_string(); // Get the type of the packet.
                         match typ.as_str() {
-                            "PRV" => {
+                            "PRV" if first => {
                                 let mut key = vec![0u8; key_len];
-                                if stream.read_exact(&mut key).await.is_err() {
-                                    break;
-                                }
+                                stream.read_exact(&mut key).await?;
                                 let symm = {
                                     let mut t = vec![0u8; RSA_SIZE as usize];
                                     let l = cl_rsa.private_decrypt(&key, &mut t, Padding::PKCS1)?;
                                     t[0..l].to_owned()
                                 };
                                 let mut der_len_buf = [0u8; 4];
-                                if stream.read_exact(&mut der_len_buf).await.is_err() {
-                                    break;
-                                }
+                                stream.read_exact(&mut der_len_buf).await?;
                                 let der_len = u32::from_be_bytes(der_len_buf);
                                 let mut der_enc = vec![0u8; der_len as usize];
                                 stream.read_exact(&mut der_enc).await?;
                                 let der = decrypt(ciph, &symm, None, &der_enc)?;
                                 sv_prv_key = Some(Rsa::private_key_from_der(&der)?);
+
+                                first = false;
                             },
                             "ENC" => {
                                 if sv_prv_key.is_some() {
@@ -102,7 +104,7 @@ pub async fn sender_loop(
                                     let msg_str = decrypt(ciph, &k, Some(&iv), &msg)?;
 
                                     let msg_str = String::from_utf8_lossy(&msg_str);
-                                    ssx.send(msg_str.to_string()).await?;
+                                    stx.send(msg_str.to_string()).await?;
                                     
                                 } else {
                                     eprintln!("No");
@@ -112,7 +114,7 @@ pub async fn sender_loop(
                         }
                     },
                     Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => {
-                        ssx.send("Close".to_owned()).await?;
+                        stx.send("C".to_owned()).await?;
                         break; // Break on close message.
                     },
                     Err(e) => {
@@ -121,7 +123,7 @@ pub async fn sender_loop(
                     }
                 }
             },
-            Some(m) = tx.recv() => { // Check for message from the terminal.
+            Some(m) = rx.recv() => { // Check for message from the terminal.
                 if !m.is_empty() {
                     if let Some(prv_rsa) = &sv_prv_key {
                         let msg = Message::new(&user, &m);      // Create the message struct.

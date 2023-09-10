@@ -3,7 +3,6 @@ use tokio::task::*;
 
 mod message;
 mod prelude;
-mod reciever;
 mod sender;
 mod terminal;
 

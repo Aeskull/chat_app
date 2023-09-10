@@ -31,8 +31,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
 
     // Create three sets of channels
     let (stx, srx) = channel::<String>(25); // Send the message from the terminal to the sender
-    let (rtx, mut rrx) = channel::<Message>(25); // Send from the reciever to the terminal (may remove)
-    let (sstx, ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
+    let (sstx, mut ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
 
     // Spawn the sender and reciever loops
     tokio::spawn(async {
@@ -40,11 +39,11 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
             println!("{e:?}");
         }
     });
-    tokio::spawn(async {
-        if let Err(e) = crate::reciever::reciever_loop(rtx, ssrx).await {
-            println!("{e:?}");
-        }
-    });
+    // tokio::spawn(async {
+    //     if let Err(e) = crate::reciever::reciever_loop(rtx, ssrx).await {
+    //         println!("{e:?}");
+    //     }
+    // });
 
     // Create the TextArea where the user will be inputting his text. Add a border around it
     let mut text_input = TextArea::default();
@@ -106,8 +105,12 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
         // Check if we recieve something from the Reciever for 1 millisecond. If not, continue the loop.
         tokio::select! {
             // Try and recieve a message
-            o_msg = rrx.recv() => {
-                if let Some(m) = o_msg {
+            o_msg = ssrx.recv() => {
+                if let Some(s) = o_msg {
+                    if s == "C" {
+                        return Ok(())
+                    }
+                    let m = serde_json::from_str::<Message>(&s)?;
                     let header = m.get_header();
                     text_messages.insert_str(header);
                     text_messages.insert_newline();
