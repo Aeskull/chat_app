@@ -5,11 +5,11 @@ use std::fmt::Display;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug)]
-pub struct MyError {
+pub struct ConnError {
     content: String
 }
 
-impl MyError {
+impl ConnError {
     pub fn new(s: &str) -> Self {
         Self {
             content: s.to_owned(),
@@ -17,10 +17,10 @@ impl MyError {
     }
 }
 
-impl Display for MyError {
+impl Display for ConnError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{}", self.content)
     }
 }
 
-impl Error for MyError {}
+impl Error for ConnError {}

@@ -141,7 +141,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<()> {
                     )?;
                     terminal.show_cursor()?;
                     disable_raw_mode()?;
-                    return Err(Box::new(MyError::new("The connection was forcibly closed by the server")));
+                    return Err(Box::new(ConnError::new("The connection was forcibly closed by the server")));
                 }
             },
             // Wait for a millisecond. Continue the loop if this elapses.
