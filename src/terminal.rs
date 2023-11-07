@@ -122,7 +122,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
                 let mut counter = 0;
                 for idx in 0..len {
                     // Handle if the statement is longer than the width of the TextArea, and insert newlines as appropriate
-                    if (idx % frame.size().width as usize) == 0 && idx > 0 {
+                    if (idx % (frame.size().width - 2) as usize) == 0 && idx > 0 {
                         msg.insert(idx + counter, '\n');
                         counter += 1;
                     }

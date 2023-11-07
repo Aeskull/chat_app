@@ -26,9 +26,7 @@ pub async fn sender_loop(
         Err(_) => {
             match TcpStream::connect("127.0.0.1:42530").await {
                 Ok(t) => t,
-                Err(_) => {
-                    return Err(ConnectionError::new("connection refused"))
-                },
+                Err(_) => return Err(ConnectionError::new("connection refused")),
             }
         }
     };
@@ -92,6 +90,7 @@ pub async fn sender_loop(
                                     let mut msg_len = [0u8; 4];
                                     stream.read_exact(&mut msg_len).await.unwrap();
                                     let len = u32::from_be_bytes(msg_len) as usize;
+                                    
                                     let mut msg = vec![0u8; len];
                                     stream.read_exact(&mut msg).await.unwrap();
                                         
