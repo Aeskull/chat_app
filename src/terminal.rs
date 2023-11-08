@@ -8,7 +8,7 @@ use {
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
-    io::Stdout,
+    std::io::Stdout,
     ratatui::{
         backend::CrosstermBackend,
         layout::{Constraint, Direction, Layout},
