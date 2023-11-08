@@ -1,23 +1,24 @@
-use std::io::Stdout;
-
-use crate::{message::Message, prelude::ConnectionError};
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+use {
+    crate::{message::Message, prelude::ConnectionError},
+    crossterm::{
+        event::{
+            self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+            KeyModifiers,
+        },
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    io::Stdout,
+    ratatui::{
+        backend::CrosstermBackend,
+        layout::{Constraint, Direction, Layout},
+        style::{Color, Style},
+        widgets::{Block, BorderType, Borders},
+        Frame, Terminal,
+    },
+    tokio::sync::mpsc::channel,
+    tui_textarea::{Input, Key, TextArea},
 };
-use tokio::sync::mpsc::channel;
-use ratatui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    widgets::{Block, BorderType, Borders},
-    Frame, Terminal,
-};
-use tui_textarea::{Input, Key, TextArea};
 
 /// ### Terminal update loop.
 ///
@@ -39,7 +40,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
     let mut sender = tokio::spawn(async {
         match crate::sender::sender_loop(srx, sstx, user, ip).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(e)
+            Err(e) => Err(e),
         }
     });
 
@@ -49,7 +50,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Input")
+            .title("Input"),
     );
 
     // Create the TextArea where the messages will be displayed. Add a border around it, and hide the cursor.
@@ -59,7 +60,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
             .title("Messages")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White))
-            .border_type(BorderType::Rounded)
+            .border_type(BorderType::Rounded),
     );
     text_messages.set_cursor_style(Style::default().fg(Color::Black));
 
@@ -167,7 +168,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
 /// ta: &TextArea // The TextArea where the user is typing
 /// msg: &TextArea // The TextArea where the messages are
 /// ```
-fn draw_ui<B: Backend>(f: &mut Frame<B>, ta: &TextArea, msg: &TextArea) {
+fn draw_ui(f: &mut Frame, ta: &TextArea, msg: &TextArea) {
     let msg_widget = msg.widget();
     let widget = ta.widget();
 
@@ -234,14 +235,14 @@ mod tests {
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::widgets::{Block, Borders};
+    use ratatui::Terminal;
     use tokio::sync::mpsc::channel;
     use tokio::{
         spawn,
         sync::mpsc::{Receiver, Sender},
     };
-    use ratatui::backend::CrosstermBackend;
-    use ratatui::widgets::{Block, Borders};
-    use ratatui::Terminal;
     use tui_textarea::TextArea;
 
     /// Test of just figuring out how mpsc channels work.

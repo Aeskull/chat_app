@@ -1,12 +1,12 @@
-use std::error::Error;
-use std::fmt::Display;
+use std::{error::Error, fmt::Display};
 
 /// Generic Result type
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// An error for connections. All it contains is a String dennoting the error (may expand later).
 #[derive(Debug)]
 pub struct ConnectionError {
-    message: String
+    message: String,
 }
 
 impl ConnectionError {

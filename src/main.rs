@@ -1,5 +1,4 @@
-use prelude::*;
-use tokio::task::*;
+use {prelude::*, tokio::task::*};
 
 mod message;
 mod prelude;

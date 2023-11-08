@@ -1,11 +1,16 @@
-use crate::message::Message;
-use crate::prelude::ConnectionError;
-use openssl::symm::{Cipher, encrypt, decrypt};
-use openssl::pkey::Private;
-use openssl::rsa::{Padding, Rsa};
-use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use {
+    crate::{message::Message, prelude::ConnectionError},
+    openssl::{
+        pkey::Private,
+        rsa::{Padding, Rsa},
+        symm::{decrypt, encrypt, Cipher},
+    },
+    serde_json::json,
+    tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpStream,
+    },
+};
 
 /// ### The main Sender loop.
 ///
@@ -23,14 +28,12 @@ pub async fn sender_loop(
     // Make the connection to the server
     let mut stream = match TcpStream::connect(ip).await {
         Ok(conn) => conn,
-        Err(_) => {
-            match TcpStream::connect("127.0.0.1:42530").await {
-                Ok(t) => t,
-                Err(_) => return Err(ConnectionError::new("connection refused")),
-            }
-        }
+        Err(_) => match TcpStream::connect("127.0.0.1:42530").await {
+            Ok(t) => t,
+            Err(_) => return Err(ConnectionError::new("connection refused")),
+        },
     };
-    
+
     let cl_rsa = Rsa::generate(RSA_SIZE).unwrap();
     let ciph = Cipher::aes_256_cbc();
     let iv = gen_rand_iv(ciph.block_size());
@@ -90,10 +93,10 @@ pub async fn sender_loop(
                                     let mut msg_len = [0u8; 4];
                                     stream.read_exact(&mut msg_len).await.unwrap();
                                     let len = u32::from_be_bytes(msg_len) as usize;
-                                    
+
                                     let mut msg = vec![0u8; len];
                                     stream.read_exact(&mut msg).await.unwrap();
-                                        
+
                                     let Some(dec_key) = sv_prv_key.as_mut() else {
                                         break;
                                     };
@@ -108,7 +111,7 @@ pub async fn sender_loop(
 
                                     let msg_str = String::from_utf8_lossy(&msg_str);
                                     stx.send(msg_str.to_string()).await.unwrap();
-                                    
+
                                 } else {
                                     eprintln!("No");
                                 }
