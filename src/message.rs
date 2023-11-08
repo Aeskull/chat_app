@@ -25,7 +25,7 @@ impl Message {
     /// Returns a new Message structure
     pub fn new(user: &str, payload: &str) -> Self {
         let now = chrono::offset::Local::now()
-            .format("%Y %m %d %H:%M")
+            .format("%H:%M | %Y %d %m")
             .to_string();
         Self {
             from: user.to_owned(),
