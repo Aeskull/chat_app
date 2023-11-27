@@ -8,7 +8,6 @@ use {
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
-    std::io::Stdout,
     ratatui::{
         backend::CrosstermBackend,
         layout::{Constraint, Direction, Layout},
@@ -16,6 +15,7 @@ use {
         widgets::{Block, BorderType, Borders},
         Frame, Terminal,
     },
+    std::io::Stdout,
     tokio::sync::mpsc::channel,
     tui_textarea::{Input, Key, TextArea},
 };

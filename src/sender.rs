@@ -30,7 +30,9 @@ pub async fn sender_loop(
 
     // Make the connection to the server
     // Make the socket from an ip. Default to 127.0.0.1:42530 upon an invalid ip
-    let mut sock = ip.parse::<SocketAddr>().unwrap_or("127.0.0.1:42530".parse::<SocketAddr>().unwrap());
+    let mut sock = ip
+        .parse::<SocketAddr>()
+        .unwrap_or("127.0.0.1:42530".parse::<SocketAddr>().unwrap());
     let mut stream = match TcpStream::connect(sock).await {
         Ok(conn) => conn,
         Err(_) => {
@@ -40,7 +42,7 @@ pub async fn sender_loop(
                 Ok(t) => t,
                 Err(_) => return Err(ConnectionError::new("connection refused")),
             }
-        },
+        }
     };
 
     let cl_rsa = Rsa::generate(RSA_SIZE).unwrap();
