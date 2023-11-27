@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use {
     crate::{message::Message, prelude::ConnectionError},
     openssl::{
@@ -23,20 +25,26 @@ pub async fn sender_loop(
 ) -> Result<(), ConnectionError> {
     const RSA_SIZE: u32 = 2048;
     const SYMM_SIZE: usize = 32;
+    const DEFAULT_PORT: u16 = 42530;
     let mut first = true;
 
     // Make the connection to the server
-    let mut stream = match TcpStream::connect(ip).await {
+    // Make the socket from an ip. Default to 127.0.0.1:42530 upon an invalid ip
+    let mut sock = ip.parse::<SocketAddr>().unwrap_or("127.0.0.1:42530".parse::<SocketAddr>().unwrap());
+    let mut stream = match TcpStream::connect(sock).await {
         Ok(conn) => conn,
-        Err(_) => match TcpStream::connect("127.0.0.1:42530").await {
-            Ok(t) => t,
-            Err(_) => return Err(ConnectionError::new("connection refused")),
+        Err(_) => {
+            // If the connection failed, change the port to the default port and try again, returning if failing again.
+            sock.set_port(DEFAULT_PORT);
+            match TcpStream::connect(sock).await {
+                Ok(t) => t,
+                Err(_) => return Err(ConnectionError::new("connection refused")),
+            }
         },
     };
 
     let cl_rsa = Rsa::generate(RSA_SIZE).unwrap();
     let ciph = Cipher::aes_256_cbc();
-    let iv = gen_rand_iv(ciph.block_size());
     let mut sv_prv_key: Option<Rsa<Private>> = None;
 
     {
@@ -107,7 +115,7 @@ pub async fn sender_loop(
                                         t[0..len].to_owned()
                                     };
 
-                                    let msg_str = decrypt(ciph, &k, Some(&iv), &msg).unwrap();
+                                    let msg_str = decrypt(ciph, &k, None, &msg).unwrap();
 
                                     let msg_str = String::from_utf8_lossy(&msg_str);
                                     stx.send(msg_str.to_string()).await.unwrap();
@@ -139,7 +147,7 @@ pub async fn sender_loop(
                         };
                         let key = gen_rand_symm(SYMM_SIZE);
 
-                        let msg_enc = encrypt(ciph, &key, Some(&iv), &msg_bytes).unwrap();
+                        let msg_enc = encrypt(ciph, &key, None, &msg_bytes).unwrap();
                         let key_enc = {
                             let mut t = vec![0u8; RSA_SIZE as usize];
                             let len = prv_rsa.public_encrypt(&key, &mut t, Padding::PKCS1).unwrap();
@@ -162,12 +170,6 @@ pub async fn sender_loop(
 
 fn gen_rand_symm(prec: usize) -> Vec<u8> {
     let mut key = vec![0u8; prec];
-    openssl::rand::rand_bytes(&mut key).unwrap();
-    key
-}
-
-fn gen_rand_iv(block_size: usize) -> Vec<u8> {
-    let mut key = vec![0u8; block_size];
     openssl::rand::rand_bytes(&mut key).unwrap();
     key
 }

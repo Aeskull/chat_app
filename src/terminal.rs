@@ -32,7 +32,7 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).unwrap(); // Create the crossterm terminal app
 
-    // Create three sets of channels
+    // Create two sets of channels
     let (stx, srx) = channel::<String>(25); // Send the message from the terminal to the sender
     let (sstx, mut ssrx) = channel::<String>(25); // Send from the Sender to the Reciever. (The Sender handles both incoming and outgoing messages)
 
@@ -113,7 +113,9 @@ pub async fn terminal_loop(user: String, ip: String) -> Result<(), ConnectionErr
                     };
                     return Err(ConnectionError::new("The connection was forcibly closed by the server"));
                 }
-                let m = serde_json::from_str::<Message>(&s).unwrap();
+                let Ok(m) = serde_json::from_str::<Message>(&s) else {
+                    return Err(ConnectionError::new(&format!("Incoming message '{s}' was unparseable")));
+                };
                 let header = m.get_header();
                 text_messages.insert_str(header);
                 text_messages.insert_newline();
