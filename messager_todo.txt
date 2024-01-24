@@ -1,0 +1,5 @@
+Change the encryption method:
+	On_Server_Start => Create group symmetric key
+	On_Client_Connect => Encrypt group symmetric key with each client's public RSA
+	On_Message_Send => Encrypt message with group symmetric key
+	On_Message_Recv => Decrypt message with group symmetric key
