@@ -78,18 +78,27 @@ pub async fn sender_loop(
                         let typ = String::from_utf8_lossy(&key_buf).to_string(); // Get the type of the packet.
                         match typ.as_str() {
                             "PRV" if first => {
+                                // Get the symmetrical key
                                 let mut key = vec![0u8; key_len];
                                 stream.read_exact(&mut key).await.unwrap();
+
+                                // Decrypt the symmetrical key
                                 let symm = {
                                     let mut t = vec![0u8; RSA_SIZE as usize];
                                     let l = cl_rsa.private_decrypt(&key, &mut t, Padding::PKCS1).unwrap();
                                     t[0..l].to_owned()
                                 };
+
+                                // Get the DER-encoded private key length
                                 let mut der_len_buf = [0u8; 4];
                                 stream.read_exact(&mut der_len_buf).await.unwrap();
                                 let der_len = u32::from_be_bytes(der_len_buf);
+
+                                // Get the DER-encoded private key
                                 let mut der_enc = vec![0u8; der_len as usize];
                                 stream.read_exact(&mut der_enc).await.unwrap();
+
+                                // Generate the server's private key from the DER
                                 let der = decrypt(ciph, &symm, None, &der_enc).unwrap();
                                 sv_prv_key = Some(Rsa::private_key_from_der(&der).unwrap());
 
